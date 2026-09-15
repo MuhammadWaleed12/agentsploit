@@ -61,6 +61,53 @@ servers:
     repo: https://github.com/microsoft/markitdown.git
     subdir: packages/markitdown-mcp
 
+  # --- widened set (added 2026-09-08 via `gh search repos "mcp server"
+  #     --language=python --sort=stars`; all Python-dominant real servers) ---
+  - name: windows-mcp                             # 6.9k★ computer-use (command sinks)
+    repo: https://github.com/CursorTouch/Windows-MCP.git
+
+  - name: ha-mcp                                  # 4.7k★ Home Assistant (action sinks)
+    repo: https://github.com/homeassistant-ai/ha-mcp.git
+
+  - name: tradingview-mcp                         # 4.4k★ market data (sources)
+    repo: https://github.com/atilaahmettaner/tradingview-mcp.git
+
+  - name: mcp-obsidian                            # 4.4k★ Obsidian vault read/write
+    repo: https://github.com/MarkusPfundstein/mcp-obsidian.git
+
+  - name: excel-mcp-server                        # 4.2k★ Excel file read/write
+    repo: https://github.com/haris-musa/excel-mcp-server.git
+
+  - name: linkedin-mcp-server                     # 3.4k★ LinkedIn
+    repo: https://github.com/stickerdaniel/linkedin-mcp-server.git
+
+  - name: google-workspace-mcp                    # 3.1k★ Gmail/Calendar/Docs (send sinks)
+    repo: https://github.com/taylorwilsdon/google_workspace_mcp.git
+
+  - name: arxiv-mcp-server                        # 3.1k★ arXiv fetch (sources)
+    repo: https://github.com/blazickjp/arxiv-mcp-server.git
+
+  - name: financial-datasets-mcp                  # 2.3k★ stock-market data (sources)
+    repo: https://github.com/financial-datasets/mcp-server.git
+
+  - name: office-word-mcp                         # 2.1k★ Word doc read/write
+    repo: https://github.com/GongRzhe/Office-Word-MCP-Server.git
+
+  - name: office-powerpoint-mcp                    # 1.9k★ PowerPoint read/write
+    repo: https://github.com/GongRzhe/Office-PowerPoint-MCP-Server.git
+
+  - name: telegram-mcp                            # 1.6k★ Telegram read/send (source+sink)
+    repo: https://github.com/chigwell/telegram-mcp.git
+
+  - name: minimax-mcp                             # 1.6k★ MiniMax API
+    repo: https://github.com/MiniMax-AI/MiniMax-MCP.git
+
+  - name: mysql-mcp-server                        # 1.4k★ MySQL (query sinks)
+    repo: https://github.com/designcomputer/mysql_mcp_server.git
+
+  - name: mcp-alchemy                             # 419★ SQLAlchemy DB (query sinks)
+    repo: https://github.com/runekaagaard/mcp-alchemy.git
+
   # Excluded after API check (kept here so you don't re-chase them):
   #   modelcontextprotocol/python-sdk  - SDK, not a deployed server
   #   modelcontextprotocol/servers-archived, tinybirdco/mcp-tinybird,
@@ -68,3 +115,7 @@ servers:
   #   elastic/mcp-server-elasticsearch (Rust), grafana/mcp-grafana (Go),
   #   supabase/mcp, mongodb-js/mongodb-mcp-server, getsentry/sentry-mcp,
   #   confluentinc/mcp-confluent, pinecone-io/pinecone-mcp  - TypeScript
+  # 2026-09-08 round also skipped: PrefectHQ/fastmcp (framework, not a server),
+  #   pydantic/pydantic-ai + browser-use/browser-use (agent frameworks),
+  #   snyk/agent-scan (a scanner), stripe/ai + microsoft/playwright-mcp +
+  #   wonderwhy-er/DesktopCommanderMCP (TypeScript), *-guide repos (docs).
