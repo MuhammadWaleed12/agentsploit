@@ -1,11 +1,13 @@
-# What 1,376 tools across 28 MCP servers say about the agentic attack surface
+# What 1,384 tools across 28 MCP servers say about the agentic attack surface
 
-> Method note. Numbers are from a survey of 28 popular Python MCP servers (plus
-> the reference-servers repo), run with the reproducible harness in
-> [`examples/mcp-survey/`](../examples/mcp-survey). Everything below is from
-> **public source code** — no server was connected to or executed. The
-> capability labels are heuristic (see caveats); this writeup deliberately does
-> **not** call anything a vulnerability.
+> Method note. Numbers are a **snapshot taken 2026-10-20** of 28 popular Python
+> MCP servers (plus the reference-servers repo), run with the reproducible
+> harness in [`examples/mcp-survey/`](../examples/mcp-survey). Upstream repos
+> change, so re-running later yields somewhat different counts — the harness is
+> deterministic for a given set of checkouts, and `servers.yaml` lists exactly
+> what was surveyed. Everything below is from **public source code** — no server
+> was connected to or executed. The capability labels are heuristic (see
+> caveats); this writeup deliberately does **not** call anything a vulnerability.
 
 MCP has a few hundred open-source servers now, each handing an agent a set of
 tools. I got curious about the *shape* of that surface — not "is server X
@@ -16,7 +18,7 @@ stars** (AWS Labs, Google Workspace, Atlassian, Home Assistant, Snowflake, the
 Neo4j/Redis/Qdrant/Chroma/Milvus database servers, the Office/Excel document
 servers, Telegram, and more) and ran
 [AgentSploit](https://github.com/agentsploit/agentsploit)'s inventory checks
-plus a source/sink classifier over them. **1,376 tools across 28 servers.**
+plus a source/sink classifier over them. **1,384 tools across 28 servers.**
 Reproducible harness at the bottom.
 
 ## Finding 1: tool descriptions are already full of instructions to the model
@@ -24,21 +26,20 @@ Reproducible harness at the bottom.
 Tool descriptions are LLM-readable text, and the "tool poisoning" attack class
 assumes an attacker can smuggle instructions into them. What the survey shows is
 that **legitimate servers already write descriptions as imperative instructions
-to the agent.** Real, entirely benign examples, each from a *different* vendor:
+to the agent.** Real, entirely benign examples from AWS Labs and Google
+Workspace servers:
 
 > "Before using this tool, provide a 1-3 sentence explanation…" — AWS Labs
 > "CRITICAL: YOU MUST CALL inspect_doc_structure FIRST…" — Google Workspace
-> "MUST call ha_get_skill_guide … first" — Home Assistant
 > "🔴 PREREQUISITE: Before calling this tool, you MUST first call `…`" — AWS Labs
 
 These are good-faith usage guidelines. But they're indistinguishable, at the
 text level, from an injected `IGNORE ALL PREVIOUS INSTRUCTIONS`. A pattern-based
-scanner (including AgentSploit's) flags both — I hand-reviewed all **11** matches,
-spread across **5 independent vendors** (AWS, Google, Home Assistant, arXiv,
-plus the reference servers), and every one was **benign**. That's the actual
-finding: there is no clean signal separating a benign imperative description
-from a malicious one, because the ecosystem uses the injection channel as a
-feature.
+scanner (including AgentSploit's) flags both — I hand-reviewed all **9** matches,
+spread across **4 independent vendors** (AWS, Google, Home Assistant, arXiv),
+and every one was **benign**. That's the actual finding: there is no clean
+signal separating a benign imperative description from a malicious one, because
+the ecosystem uses the injection channel as a feature.
 
 ## Finding 2: sources and sinks live in the same context, everywhere
 
@@ -49,20 +50,20 @@ I labeled each tool by capability:
 - **sink** — looks like a high-impact action (an `exec`/`run`/`query`/`write`/
   `send`/`delete`, or takes a `command`/`query`/`code` arg).
 
-Across 1,376 tools:
+Across 1,384 tools:
 
 | | count |
 |---|---|
-| untrusted-content **sources** | 248 |
-| high-impact **sinks** | 392 |
-| tools that are **both** (ingest *and* act) | **69** |
-| servers exposing >=1 source **and** >=1 sink in one context | **15 / 28** |
+| untrusted-content **sources** | 239 |
+| high-impact **sinks** | 384 |
+| tools that are **both** (ingest *and* act) | **59** |
+| servers exposing >=1 source **and** >=1 sink in one context | **14 / 28** |
 
-The 69 "both" tools are the sharpest edge: a single tool that will pull in a
+The 59 "both" tools are the sharpest edge: a single tool that will pull in a
 URL/file *and* run a query or command is a one-call source→sink bridge if the
 content it pulls is attacker-controlled — e.g. `search_table(url)` that also
 takes a `query`, `run_query(db_endpoint, sql)`, or the Google Workspace and
-Office document tools that read a doc *and* write it back. And 15 of 28 servers
+Office document tools that read a doc *and* write it back. And 14 of 28 servers
 put sources and sinks in the same agent context with nothing marking one as
 untrusted or the other as dangerous. (The harness prints the full bridge list;
 hand-review it — a few are weak matches, e.g. AWS IAM `create_user` matches on
@@ -111,11 +112,11 @@ python survey.py surface          # source/sink classification
   (`url`/`uri`/`path`/`document` args, `fetch`/`crawl`/`scrape` names), matching
   is token-based, but it's still a capability guess, not a data-flow. Counts are
   "could plausibly be"; the robust part is the *shape* — most servers mix
-  ingestion and action, and 69 tools do both in one call.
+  ingestion and action, and 59 tools do both in one call.
 - Static extraction misses Pydantic-schema args, cross-file enums, and custom
-  tool frameworks (serena and mcp-obsidian both extracted 0 — they build tool
-  objects dynamically inside a custom handler class), plus every non-Python
-  server, so tool counts are a lower bound.
+  tool frameworks (serena, mcp-obsidian, and excel-mcp-server extracted 0 — each
+  registers tools through a bespoke registry/handler class rather than the
+  standard SDK), plus every non-Python server, so tool counts are a lower bound.
 - Pattern-based checks flag benign text; I hand-reviewed, and this post reports
   the reviewed conclusion, not the raw count.
 

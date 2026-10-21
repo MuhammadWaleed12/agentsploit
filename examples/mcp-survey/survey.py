@@ -42,26 +42,28 @@ FINDINGS_DIR = OUT_DIR / "findings"
 try:
     import yaml
 except ImportError:  # pragma: no cover
-    sys.exit("PyYAML is required. Run inside the agentsploit venv:  "
-             f"{REPO_ROOT}/.venv/bin/python {__file__} ...")
+    sys.exit(
+        "PyYAML is required. Run inside the agentsploit venv:  "
+        f"{REPO_ROOT}/.venv/bin/python {__file__} ..."
+    )
 
 # Import agentsploit's REAL checks. Prefer the installed package; fall back to
 # the repo's src/ so the harness works from a fresh checkout too.
 try:
-    from agentsploit.core.finding import Severity  # noqa: F401
-    from agentsploit.modules.mcp.client import MCPInventory
+    from agentsploit.core.finding import Severity
+    from agentsploit.modules.mcp.checks.prompt_disclosure import PromptDisclosureCheck
     from agentsploit.modules.mcp.checks.tool_poisoning import ToolPoisoningCheck
     from agentsploit.modules.mcp.checks.tool_shadowing import ToolShadowingCheck
     from agentsploit.modules.mcp.checks.unsafe_tool_args import UnsafeToolArgsCheck
-    from agentsploit.modules.mcp.checks.prompt_disclosure import PromptDisclosureCheck
+    from agentsploit.modules.mcp.client import MCPInventory
 except ImportError:
     sys.path.insert(0, str(REPO_ROOT / "src"))
     from agentsploit.core.finding import Severity  # noqa: F401
-    from agentsploit.modules.mcp.client import MCPInventory
+    from agentsploit.modules.mcp.checks.prompt_disclosure import PromptDisclosureCheck
     from agentsploit.modules.mcp.checks.tool_poisoning import ToolPoisoningCheck
     from agentsploit.modules.mcp.checks.tool_shadowing import ToolShadowingCheck
     from agentsploit.modules.mcp.checks.unsafe_tool_args import UnsafeToolArgsCheck
-    from agentsploit.modules.mcp.checks.prompt_disclosure import PromptDisclosureCheck
+    from agentsploit.modules.mcp.client import MCPInventory
 
 INVENTORY_CHECKS = [
     ToolPoisoningCheck,
@@ -74,8 +76,12 @@ INVENTORY_CHECKS = [
 
 _DECORATOR_TOOL_NAMES = {"tool"}  # matches @mcp.tool(), @server.tool(), @app.tool()
 _ANNOTATION_TO_JSON = {
-    "str": "string", "int": "integer", "float": "number",
-    "bool": "boolean", "list": "array", "dict": "object",
+    "str": "string",
+    "int": "integer",
+    "float": "number",
+    "bool": "boolean",
+    "list": "array",
+    "dict": "object",
 }
 
 
@@ -92,16 +98,18 @@ def _build_enum_map(tree: ast.AST) -> EnumMap:
         if not isinstance(node, ast.ClassDef):
             continue
         base_names = {
-            (b.id if isinstance(b, ast.Name) else getattr(b, "attr", ""))
-            for b in node.bases
+            (b.id if isinstance(b, ast.Name) else getattr(b, "attr", "")) for b in node.bases
         }
         if not (base_names & {"Enum", "IntEnum", "StrEnum"}):
             continue
         for stmt in node.body:
-            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 \
-                    and isinstance(stmt.targets[0], ast.Name) \
-                    and isinstance(stmt.value, ast.Constant) \
-                    and isinstance(stmt.value.value, str):
+            if (
+                isinstance(stmt, ast.Assign)
+                and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str)
+            ):
                 enums[(node.name, stmt.targets[0].id)] = stmt.value.value
     return enums
 
@@ -173,9 +181,9 @@ def _schema_from_signature(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[s
 class ExtractedTool:
     name: str
     description: str
-    inputSchema: dict[str, Any] = field(default_factory=dict)
-    source: str = ""          # file:line
-    method: str = ""          # how it was extracted
+    inputSchema: dict[str, Any] = field(default_factory=dict)  # noqa: N815 (MCP field name)
+    source: str = ""  # file:line
+    method: str = ""  # how it was extracted
     schema_partial: bool = False
 
 
@@ -198,12 +206,16 @@ def _extract_from_tree(tree: ast.AST, relpath: str) -> list[ExtractedTool]:
             if not isinstance(schema, dict):
                 schema = _static_obj(_kw(node, "input_schema"))
             partial = not isinstance(schema, dict)
-            tools.append(ExtractedTool(
-                name=name, description=desc,
-                inputSchema=schema if isinstance(schema, dict) else {},
-                source=f"{relpath}:{node.lineno}", method="Tool()-literal",
-                schema_partial=partial,
-            ))
+            tools.append(
+                ExtractedTool(
+                    name=name,
+                    description=desc,
+                    inputSchema=schema if isinstance(schema, dict) else {},
+                    source=f"{relpath}:{node.lineno}",
+                    method="Tool()-literal",
+                    schema_partial=partial,
+                )
+            )
 
     # Pattern B: @mcp.tool()/@server.tool() decorated functions.
     for node in ast.walk(tree):
@@ -219,45 +231,66 @@ def _extract_from_tree(tree: ast.AST, relpath: str) -> list[ExtractedTool]:
                 desc = _static_str(_kw(dec, "description"), enums)
             name = name or node.name
             desc = desc if desc is not None else (ast.get_docstring(node) or "")
-            tools.append(ExtractedTool(
-                name=name, description=desc,
-                inputSchema=_schema_from_signature(node),
-                source=f"{relpath}:{node.lineno}", method="@tool-decorator",
-                schema_partial=True,  # signature-derived schema is approximate
-            ))
+            tools.append(
+                ExtractedTool(
+                    name=name,
+                    description=desc,
+                    inputSchema=_schema_from_signature(node),
+                    source=f"{relpath}:{node.lineno}",
+                    method="@tool-decorator",
+                    schema_partial=True,  # signature-derived schema is approximate
+                )
+            )
 
     # Pattern C: Tool.from_function(fn, name=..., description=...) factory calls
     # (e.g. clickhouse: mcp.add_tool(Tool.from_function(list_databases, name=...))).
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr == "from_function":
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "from_function"
+        ):
             name = _static_str(_kw(node, "name"), enums)
             if name is None:
                 continue
-            tools.append(ExtractedTool(
-                name=name, description=_static_str(_kw(node, "description"), enums) or "",
-                inputSchema={}, source=f"{relpath}:{node.lineno}",
-                method="from_function()", schema_partial=True,
-            ))
+            tools.append(
+                ExtractedTool(
+                    name=name,
+                    description=_static_str(_kw(node, "description"), enums) or "",
+                    inputSchema={},
+                    source=f"{relpath}:{node.lineno}",
+                    method="from_function()",
+                    schema_partial=True,
+                )
+            )
 
     # Pattern D: programmatic registration `x.tool(fn, name=...)` /
     # `x.add_tool(fn, name=...)` (e.g. qdrant: self.tool(find_foo, name=...)).
     # Requires a positional arg + literal name= so it can't collide with the
     # zero-positional `@x.tool()` decorator (Pattern B) or a from_function arg.
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr in {"tool", "add_tool"} and node.args:
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"tool", "add_tool"}
+            and node.args
+        ):
             first = node.args[0]
             if isinstance(first, ast.Call):  # e.g. add_tool(Tool.from_function(...)) -> Pattern C/A
                 continue
             name = _static_str(_kw(node, "name"), enums)
             if name is None:
                 continue
-            tools.append(ExtractedTool(
-                name=name, description=_static_str(_kw(node, "description"), enums) or "",
-                inputSchema={}, source=f"{relpath}:{node.lineno}",
-                method=f".{node.func.attr}()-call", schema_partial=True,
-            ))
+            tools.append(
+                ExtractedTool(
+                    name=name,
+                    description=_static_str(_kw(node, "description"), enums) or "",
+                    inputSchema={},
+                    source=f"{relpath}:{node.lineno}",
+                    method=f".{node.func.attr}()-call",
+                    schema_partial=True,
+                )
+            )
 
     # De-dupe by (name, source).
     seen: set[tuple[str, str]] = set()
@@ -288,6 +321,7 @@ def extract_tools_from_path(root: Path) -> tuple[list[ExtractedTool], list[str]]
         tools.extend(_extract_from_tree(tree, str(rel)))
     return tools, parse_errors
 
+
 # ------------------------------------------------------------------------ collect
 
 
@@ -295,7 +329,7 @@ def _clone(repo: str, ref: str | None, dest: Path, refresh: bool) -> None:
     if dest.exists() and not refresh:
         return
     if dest.exists():
-        subprocess.run(["rm", "-rf", str(dest)], check=True)
+        subprocess.run(["rm", "-rf", str(dest)], check=True)  # noqa: S607
     cmd = ["git", "clone", "--depth", "1"]
     if ref:
         cmd += ["--branch", ref]
@@ -310,9 +344,12 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
     for s in servers:
         name = s["name"]
-        if "path" in s:                       # local checkout (e.g. self-test)
-            root = (HERE / s["path"]).resolve() if not Path(s["path"]).is_absolute() \
+        if "path" in s:  # local checkout (e.g. self-test)
+            root = (
+                (HERE / s["path"]).resolve()
+                if not Path(s["path"]).is_absolute()
                 else Path(s["path"])
+            )
             repo = s.get("repo", f"local:{root}")
         else:
             root = REPOS_DIR / name
@@ -340,10 +377,13 @@ def cmd_collect(args: argparse.Namespace) -> int:
             },
         }
         (MANIFESTS_DIR / f"{name}.json").write_text(json.dumps(manifest, indent=2))
-        print(f"  {name}: {len(tools)} tools "
-              f"({manifest['extraction']['methods']}), {len(errors)} parse errors")
+        print(
+            f"  {name}: {len(tools)} tools "
+            f"({manifest['extraction']['methods']}), {len(errors)} parse errors"
+        )
     print(f"\nmanifests -> {MANIFESTS_DIR}")
     return 0
+
 
 # --------------------------------------------------------------------------- scan
 
@@ -353,15 +393,18 @@ def _run_checks(inv: MCPInventory, target_uri: str) -> list[dict[str, Any]]:
     for check_cls in INVENTORY_CHECKS:
         check = check_cls()
         for result in check.run(inv):
-            findings.append({
-                "check": check.NAME,
-                "severity": result.severity.name if hasattr(result.severity, "name")
-                            else str(result.severity),
-                "title": result.title,
-                "target_item": result.target_item,
-                "evidence": result.evidence_extra or {},
-                "target": target_uri,
-            })
+            findings.append(
+                {
+                    "check": check.NAME,
+                    "severity": result.severity.name
+                    if hasattr(result.severity, "name")
+                    else str(result.severity),
+                    "title": result.title,
+                    "target_item": result.target_item,
+                    "evidence": result.evidence_extra or {},
+                    "target": target_uri,
+                }
+            )
     return findings
 
 
@@ -390,6 +433,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     print(f"\ncombined findings -> {OUT_DIR / 'findings.json'}")
     return 0
 
+
 # ---------------------------------------------------------------------- aggregate
 
 
@@ -403,9 +447,9 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
 
     n_servers = len(manifests)
     n_tools = sum(m["extraction"]["tool_count"] for m in manifests.values())
-    servers_with = defaultdict(set)   # check -> {server}
-    counts = Counter()                # check -> finding count
-    sev = Counter()                   # severity -> count
+    servers_with = defaultdict(set)  # check -> {server}
+    counts = Counter()  # check -> finding count
+    sev = Counter()  # severity -> count
     for f in findings:
         servers_with[f["check"]].add(f["server"])
         counts[f["check"]] += 1
@@ -432,8 +476,10 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
     lines += [
         "",
         "Severity breakdown: "
-        + ", ".join(f"{k}={sev[k]}" for k in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
-                    if sev.get(k)) + ".",
+        + ", ".join(
+            f"{k}={sev[k]}" for k in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] if sev.get(k)
+        )
+        + ".",
         "",
         "> Numbers are candidate findings from pattern-based checks over statically",
         "> extracted tool definitions. Hand-review before publishing — some hits are",
@@ -454,6 +500,7 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
     print(f"aggregate -> {OUT_DIR / 'aggregate.md'}")
     return 0
 
+
 # ------------------------------------------------------------------- surface/graph
 
 # Heuristic capability classification. This is NOT a confirmed data-flow; it
@@ -465,14 +512,58 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
 # (no bare get/list/search/read/open, which are mostly internal enumeration);
 # arg matching is token-based (so `file` no longer matches `profile`).
 _SOURCE_NAME = ("fetch", "crawl", "scrape", "download", "browse")
-_SOURCE_ARG = ("url", "uri", "href", "endpoint", "webpage", "website",
-               "path", "file", "filepath", "filename", "document")
-_SINK_NAME = ("exec", "execute", "run", "shell", "command", "eval", "query", "sql",
-              "cypher", "gremlin", "write", "create", "update", "delete", "remove",
-              "insert", "send", "email", "commit", "push", "publish", "upload",
-              "drop", "alter")
-_SINK_ARG = ("command", "cmd", "query", "sql", "cypher", "code", "script",
-             "body", "payload", "statement", "expression")
+_SOURCE_ARG = (
+    "url",
+    "uri",
+    "href",
+    "endpoint",
+    "webpage",
+    "website",
+    "path",
+    "file",
+    "filepath",
+    "filename",
+    "document",
+)
+_SINK_NAME = (
+    "exec",
+    "execute",
+    "run",
+    "shell",
+    "command",
+    "eval",
+    "query",
+    "sql",
+    "cypher",
+    "gremlin",
+    "write",
+    "create",
+    "update",
+    "delete",
+    "remove",
+    "insert",
+    "send",
+    "email",
+    "commit",
+    "push",
+    "publish",
+    "upload",
+    "drop",
+    "alter",
+)
+_SINK_ARG = (
+    "command",
+    "cmd",
+    "query",
+    "sql",
+    "cypher",
+    "code",
+    "script",
+    "body",
+    "payload",
+    "statement",
+    "expression",
+)
 
 _re = __import__("re")
 _CAMEL = _re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
@@ -495,13 +586,15 @@ def _classify(tool: dict[str, Any]) -> dict[str, Any]:
             src.append(f"arg:{a}")
         if toks & set(_SINK_ARG):
             snk.append(f"arg:{a}")
-    return {"source": bool(src), "sink": bool(snk),
-            "source_why": src[:3], "sink_why": snk[:3]}
+    return {"source": bool(src), "sink": bool(snk), "source_why": src[:3], "sink_why": snk[:3]}
 
 
 def cmd_surface(args: argparse.Namespace) -> int:
-    manifests = {p.stem: json.loads(p.read_text())
-                 for p in MANIFESTS_DIR.glob("*.json") if p.stem != "_fixture_vulnerable"}
+    manifests = {
+        p.stem: json.loads(p.read_text())
+        for p in MANIFESTS_DIR.glob("*.json")
+        if p.stem != "_fixture_vulnerable"
+    }
     if not manifests:
         print("No manifests. Run `collect` first.")
         return 1
@@ -513,13 +606,16 @@ def cmd_surface(args: argparse.Namespace) -> int:
         s = k = b = 0
         for t in m.get("tools", []):
             c = _classify(t)
-            s += c["source"]; k += c["sink"]
+            s += c["source"]
+            k += c["sink"]
             if c["source"] and c["sink"]:
                 b += 1
-                bridges.append((name, str(t.get("name", "")),
-                                c["source_why"], c["sink_why"]))
+                bridges.append((name, str(t.get("name", "")), c["source_why"], c["sink_why"]))
         n = len(m.get("tools", []))
-        tot_tools += n; tot_src += s; tot_snk += k; tot_both += b
+        tot_tools += n
+        tot_src += s
+        tot_snk += k
+        tot_both += b
         both_present = s > 0 and k > 0
         coexist += both_present
         rows.append((name, n, s, k, b, both_present))
@@ -588,34 +684,46 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         by_check[f["check"]].add(f["target_item"])
 
     checks = [
-        ("extracted 4 tools", names == {"read_secret_file", "read_file",
-                                        "run_command", "safe_add"}),
-        ("tool_poisoning fires on read_secret_file",
-         any("read_secret_file" in x for x in by_check["tool_poisoning"])),
-        ("prompt_disclosure fires (leaked secret/prompt)",
-         len(by_check["prompt_disclosure"]) >= 1),
-        ("tool_shadowing fires on read_file",
-         any("read_file" in x for x in by_check["tool_shadowing"])),
-        ("unsafe_tool_args fires on run_command",
-         any("run_command" in x for x in by_check["unsafe_tool_args"])),
-        ("safe_add triggers nothing",
-         not any("safe_add" in x for s in by_check.values() for x in s)),
+        (
+            "extracted 4 tools",
+            names == {"read_secret_file", "read_file", "run_command", "safe_add"},
+        ),
+        (
+            "tool_poisoning fires on read_secret_file",
+            any("read_secret_file" in x for x in by_check["tool_poisoning"]),
+        ),
+        ("prompt_disclosure fires (leaked secret/prompt)", len(by_check["prompt_disclosure"]) >= 1),
+        (
+            "tool_shadowing fires on read_file",
+            any("read_file" in x for x in by_check["tool_shadowing"]),
+        ),
+        (
+            "unsafe_tool_args fires on run_command",
+            any("run_command" in x for x in by_check["unsafe_tool_args"]),
+        ),
+        (
+            "safe_add triggers nothing",
+            not any("safe_add" in x for s in by_check.values() for x in s),
+        ),
         ("no parse errors", not errors),
     ]
     ok = True
     for label, passed in checks:
         print(f"  [{'PASS' if passed else 'FAIL'}] {label}")
         ok = ok and passed
-    print(f"\nSELF-TEST {'PASSED' if ok else 'FAILED'} "
-          f"({len(tools)} tools, {len(findings)} findings)")
+    print(
+        f"\nSELF-TEST {'PASSED' if ok else 'FAILED'} ({len(tools)} tools, {len(findings)} findings)"
+    )
     return 0 if ok else 1
+
 
 # --------------------------------------------------------------------------- main
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     c = sub.add_parser("collect", help="clone repos + extract tool manifests")
