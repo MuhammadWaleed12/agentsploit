@@ -21,8 +21,7 @@ class PayloadSplittingTechnique(Technique):
         fragments = instruction.split()
         width = len(str(len(fragments)))
         rendered = "\n".join(
-            f"[{index:0{width}d}] {fragment}"
-            for index, fragment in enumerate(fragments, start=1)
+            f"[{index:0{width}d}] {fragment}" for index, fragment in enumerate(fragments, start=1)
         )
         return (
             "Reassemble the words below in ascending index order, then follow "
