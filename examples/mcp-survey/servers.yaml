@@ -11,7 +11,7 @@
 # The list below is Python MCP servers, verified via the GitHub API on
 # 2026-09-05 (exists, not archived, primary language Python). Star counts are
 # noted so you can frame the survey as "top Python MCP servers by stars".
-# HAND-REVIEW manifests/ after `collect` before trusting counts — the static
+# HAND-REVIEW manifests/ after `collect` before trusting counts. The static
 # extractor undercounts (Pydantic schemas / cross-file enums / non-Python).
 
 servers:

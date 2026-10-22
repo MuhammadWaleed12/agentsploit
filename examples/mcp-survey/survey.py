@@ -462,7 +462,7 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
         "prompt_disclosure": "descriptions leaking prompts/secrets/paths",
     }
     lines = [
-        "# MCP survey — aggregate results",
+        "# MCP survey: aggregate results",
         "",
         f"- Servers surveyed: **{n_servers}**",
         f"- Tool definitions extracted: **{n_tools}**",
@@ -482,8 +482,8 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
         + ".",
         "",
         "> Numbers are candidate findings from pattern-based checks over statically",
-        "> extracted tool definitions. Hand-review before publishing — some hits are",
-        "> verbose-but-benign, and signature-derived schemas are approximate.",
+        "> extracted tool definitions. Hand-review before publishing, since some",
+        "> hits are wordy but benign, and signature-derived schemas are approximate.",
         "",
         "## Per-server",
         "",
@@ -624,7 +624,7 @@ def cmd_surface(args: argparse.Namespace) -> int:
         "# MCP attack-surface classification",
         "",
         "Heuristic capability labels over statically extracted tools. **Not** a",
-        "confirmed data-flow — a source and a sink coexisting in one server is a",
+        "confirmed data-flow. A source and a sink coexisting in one server is a",
         "*potential* source->sink chain, not proof an agent will bridge them.",
         "",
         f"- Tools classified: **{tot_tools}**",
@@ -644,8 +644,8 @@ def cmd_surface(args: argparse.Namespace) -> int:
         "",
         "## Single-tool source->sink bridges",
         "",
-        "Tools that BOTH ingest external content AND perform a high-impact action "
-        "— the sharpest edge (a one-call bridge if the ingested content is "
+        "Tools that BOTH ingest external content AND perform a high-impact action. "
+        "This is the sharpest edge (a one-call bridge if the ingested content is "
         f"attacker-controlled). {len(bridges)} total; showing up to 40:",
         "",
         "| Server | Tool | source signal | sink signal |",

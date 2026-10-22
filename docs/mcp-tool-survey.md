@@ -1,54 +1,72 @@
-# What 1,384 tools across 28 MCP servers say about the agentic attack surface
+# I looked at 1,384 tools across 28 MCP servers. Here's what the attack surface actually looks like.
 
-> Method note. Numbers are a **snapshot taken 2026-10-20** of 28 popular Python
-> MCP servers (plus the reference-servers repo), run with the reproducible
-> harness in [`examples/mcp-survey/`](../examples/mcp-survey). Upstream repos
-> change, so re-running later yields somewhat different counts — the harness is
-> deterministic for a given set of checkouts, and `servers.yaml` lists exactly
-> what was surveyed. Everything below is from **public source code** — no server
-> was connected to or executed. The capability labels are heuristic (see
-> caveats); this writeup deliberately does **not** call anything a vulnerability.
+> Quick context if you're new to this: an **MCP server** is a plug-in that gives
+> an AI agent a set of **tools** it can call, like "fetch this URL," "run this
+> database query," or "send this email." There are hundreds of open-source MCP
+> servers now. This writeup measures what those tools actually let an agent do,
+> and how often the risky combinations sit side by side.
 
-MCP has a few hundred open-source servers now, each handing an agent a set of
-tools. I got curious about the *shape* of that surface — not "is server X
-exploitable" but "what does the average tool actually let an agent do, and how
-often do the dangerous ingredients sit next to each other?" So I statically
-extracted the tool definitions from the **top Python MCP servers by GitHub
-stars** (AWS Labs, Google Workspace, Atlassian, Home Assistant, Snowflake, the
-Neo4j/Redis/Qdrant/Chroma/Milvus database servers, the Office/Excel document
-servers, Telegram, and more) and ran
-[AgentSploit](https://github.com/agentsploit/agentsploit)'s inventory checks
-plus a source/sink classifier over them. **1,384 tools across 28 servers.**
-Reproducible harness at the bottom.
+> Method note. The numbers are a **snapshot taken on 2026-10-20** of 28 popular
+> Python MCP servers (plus the reference-servers repo), produced with the
+> reproducible harness in [`examples/mcp-survey/`](../examples/mcp-survey).
+> Upstream repos change over time, so re-running this later gives somewhat
+> different counts. The harness is deterministic for a given set of checkouts,
+> and `servers.yaml` lists exactly what was surveyed. Everything below is read
+> from **public source code**. No server was connected to or executed. The
+> capability labels are rough heuristics (see the caveats), and this writeup
+> deliberately does **not** call anything a vulnerability.
+
+I kept running into MCP servers where one tool fetches a web page and another
+tool runs a command, both handed to the same agent, with nothing telling the
+model which one is dangerous. Instead of guessing how common that is, I decided
+to measure it.
+
+So I pulled the tool definitions straight from the source code of the most
+popular Python MCP servers on GitHub (AWS Labs, Google Workspace, Atlassian,
+Home Assistant, Snowflake, the Neo4j / Redis / Qdrant / Chroma / Milvus database
+servers, the Office / Excel document servers, Telegram, and more), and ran
+[AgentSploit](https://github.com/agentsploit/agentsploit)'s inventory checks plus
+a simple source/sink classifier over them. That comes to **1,384 tools across 28
+servers.** The reproducible harness is at the bottom.
 
 ## Finding 1: tool descriptions are already full of instructions to the model
 
-Tool descriptions are LLM-readable text, and the "tool poisoning" attack class
-assumes an attacker can smuggle instructions into them. What the survey shows is
-that **legitimate servers already write descriptions as imperative instructions
-to the agent.** Real, entirely benign examples from AWS Labs and Google
-Workspace servers:
+A tool's description is just text, and the AI reads it. The "tool poisoning"
+attack is built on that fact: if an attacker can slip instructions into a
+description, the model may follow them. (Think of it like hiding a note in a
+manual that the reader obeys without question.)
 
-> "Before using this tool, provide a 1-3 sentence explanation…" — AWS Labs
-> "CRITICAL: YOU MUST CALL inspect_doc_structure FIRST…" — Google Workspace
-> "🔴 PREREQUISITE: Before calling this tool, you MUST first call `…`" — AWS Labs
+What the survey shows is that **normal, legitimate servers already write their
+descriptions as direct orders to the model.** These are real examples, and all
+of them are completely harmless:
 
-These are good-faith usage guidelines. But they're indistinguishable, at the
-text level, from an injected `IGNORE ALL PREVIOUS INSTRUCTIONS`. A pattern-based
-scanner (including AgentSploit's) flags both — I hand-reviewed all **9** matches,
-spread across **4 independent vendors** (AWS, Google, Home Assistant, arXiv),
-and every one was **benign**. That's the actual finding: there is no clean
-signal separating a benign imperative description from a malicious one, because
-the ecosystem uses the injection channel as a feature.
+> "Before using this tool, provide a 1-3 sentence explanation…" (AWS Labs)
+> "CRITICAL: YOU MUST CALL inspect_doc_structure FIRST…" (Google Workspace)
+> "🔴 PREREQUISITE: Before calling this tool, you MUST first call `…`" (AWS Labs)
 
-## Finding 2: sources and sinks live in the same context, everywhere
+Those are good-faith usage notes. The problem is that, at the level of plain
+text, they look exactly like an injected `IGNORE ALL PREVIOUS INSTRUCTIONS`. A
+pattern-based scanner (AgentSploit's included) flags both the same way. I went
+through all **9** matches by hand, spread across **4 independent vendors** (AWS,
+Google, Home Assistant, arXiv), and every single one was **benign**. That is the
+real finding: there's no clean way to tell a harmless instruction-style
+description from a malicious one, because the whole ecosystem already uses that
+same channel on purpose.
 
-I labeled each tool by capability:
+## Finding 2: the risky ingredients sit side by side, everywhere
 
-- **source** — looks like it ingests external/untrusted content (takes a
-  `url`/`uri`/`path`/`document` arg, or is a `fetch`/`read`/`search`/`crawl`).
-- **sink** — looks like a high-impact action (an `exec`/`run`/`query`/`write`/
-  `send`/`delete`, or takes a `command`/`query`/`code` arg).
+I sorted every tool into two buckets:
+
+- A **source** is a tool that pulls in outside content you don't control. In the
+  data, that means it takes an argument like `url`, `uri`, `path`, or `document`,
+  or its name looks like `fetch` / `read` / `search` / `crawl`.
+- A **sink** is a tool that does something with real impact. That means a name
+  like `exec` / `run` / `query` / `write` / `send` / `delete`, or an argument
+  like `command`, `query`, or `code`.
+
+The danger isn't either bucket on its own. It's having both in front of the same
+agent, so that something the agent *read* can flow into something the agent
+*does*.
 
 Across 1,384 tools:
 
@@ -56,43 +74,48 @@ Across 1,384 tools:
 |---|---|
 | untrusted-content **sources** | 239 |
 | high-impact **sinks** | 384 |
-| tools that are **both** (ingest *and* act) | **59** |
-| servers exposing >=1 source **and** >=1 sink in one context | **14 / 28** |
+| tools that are **both** (they ingest *and* act) | **59** |
+| servers that expose at least one source **and** one sink in the same context | **14 / 28** |
 
-The 59 "both" tools are the sharpest edge: a single tool that will pull in a
-URL/file *and* run a query or command is a one-call source→sink bridge if the
-content it pulls is attacker-controlled — e.g. `search_table(url)` that also
-takes a `query`, `run_query(db_endpoint, sql)`, or the Google Workspace and
-Office document tools that read a doc *and* write it back. And 14 of 28 servers
-put sources and sinks in the same agent context with nothing marking one as
-untrusted or the other as dangerous. (The harness prints the full bridge list;
-hand-review it — a few are weak matches, e.g. AWS IAM `create_user` matches on
-an IAM `path` arg that isn't really content ingestion.)
+The 59 "both" tools are the sharpest edge. A single tool that pulls in a URL or a
+file and also runs a query or a command is a one-call bridge from untrusted input
+straight to a real action, if the content it pulls is attacker-controlled. For
+example `search_table(url)` that also takes a `query`, or `run_query(db_endpoint,
+sql)`, or the Google Workspace and Office document tools that read a document and
+write it back. And 14 of the 28 servers put sources and sinks in the same agent
+context with nothing marking one as untrusted or the other as dangerous. (The
+harness prints the full list so you can check it yourself. A few are weak
+matches. For instance AWS IAM's `create_user` trips the filter on an IAM `path`
+argument, which isn't really outside content.)
 
 ## Finding 3: the sinks are wide open
 
-Of the sink tools, dozens take a raw string with **no `enum`, `pattern`, or
-`format` constraint** — `executeQuery(query)`, `run_opencypher_query(query)`,
-`read_documentation(url)`. That's by design; it's also exactly the unconstrained
-sink that turns "the agent read a poisoned page" into "the agent ran attacker
-SQL."
+Plenty of the sink tools take a raw string with **no `enum`, `pattern`, or
+`format` constraint** on it, like `executeQuery(query)`,
+`run_opencypher_query(query)`, or `read_documentation(url)`. (Those constraints
+are the schema's way of saying "only these specific values are allowed." Without
+them, the field accepts anything.) That's by design for a query tool. It's also
+exactly the kind of wide-open sink that turns "the agent read a poisoned page"
+into "the agent ran the attacker's SQL."
 
 ## This is not a list of vulnerabilities
 
-None of the above is a bug in these servers. A source→sink chain only becomes an
-exploit when (a) untrusted input actually reaches a source and (b) the agent
-bridges it to a sink — both are properties of how the server is *deployed and
-composed*, not of the code. Confirming a real chain needs a live agent (that's
-what AgentSploit's permission-graph mapper and canary runner are for; out of
-scope for a static survey).
+To be clear: none of the above is a bug in these servers. A source-to-sink chain
+only becomes a real exploit when two things both happen: untrusted input actually
+reaches a source, and the agent actually carries it over to a sink. Both of those
+depend on how the server gets deployed and wired together, not on the code
+itself. Proving a real chain needs a live agent, which is what AgentSploit's
+permission-graph mapper and canary runner are for. That's out of scope for a
+static survey like this one.
 
 ## What actually helps
 
-- Treat third-party tool descriptions as untrusted input to your host prompt;
-  render them in an isolated context.
-- Constrain sink args (`enum`/`pattern`/`format`) instead of raw strings.
-- Don't co-locate untrusted-content sources with high-impact sinks in one
-  agent's tool set without an isolation/confirmation boundary.
+- Treat third-party tool descriptions as untrusted input to your own system
+  prompt, and keep them in an isolated context instead of pasting them in raw.
+- Constrain what sink arguments accept (`enum` / `pattern` / `format`) rather
+  than taking any raw string.
+- Don't put untrusted-content sources and high-impact sinks in the same agent's
+  tool set without an isolation or confirmation step in between.
 
 ## Reproduce it
 
@@ -100,25 +123,27 @@ scope for a static survey).
 git clone https://github.com/agentsploit/agentsploit && cd agentsploit
 pip install -e .
 cd examples/mcp-survey            # edit servers.yaml to pick targets
-python survey.py collect          # static extraction from public source
-python survey.py scan             # agentsploit inventory checks
-python survey.py aggregate        # findings table
-python survey.py surface          # source/sink classification
+python survey.py collect          # read tool definitions from public source
+python survey.py scan             # run agentsploit's inventory checks
+python survey.py aggregate        # print the findings table
+python survey.py surface          # run the source/sink classification
 ```
 
 ## Caveats
 
-- Labels are heuristic: sources are limited to external-content signals
-  (`url`/`uri`/`path`/`document` args, `fetch`/`crawl`/`scrape` names), matching
-  is token-based, but it's still a capability guess, not a data-flow. Counts are
-  "could plausibly be"; the robust part is the *shape* — most servers mix
-  ingestion and action, and 59 tools do both in one call.
-- Static extraction misses Pydantic-schema args, cross-file enums, and custom
-  tool frameworks (serena, mcp-obsidian, and excel-mcp-server extracted 0 — each
-  registers tools through a bespoke registry/handler class rather than the
-  standard SDK), plus every non-Python server, so tool counts are a lower bound.
-- Pattern-based checks flag benign text; I hand-reviewed, and this post reports
-  the reviewed conclusion, not the raw count.
+- The labels are heuristic. Sources are limited to outside-content signals
+  (`url` / `uri` / `path` / `document` arguments, `fetch` / `crawl` / `scrape`
+  names), and the matching is token-based. It's still a guess at what a tool can
+  do, not a traced data-flow. So read the counts as "could plausibly be," and
+  trust the overall shape more than any single number. The shape is the sturdy
+  part: most servers mix ingestion and action, and 59 tools do both in one call.
+- Static reading misses some tools. It can't resolve Pydantic-schema arguments or
+  cross-file enums, and it skips custom tool frameworks (serena, mcp-obsidian,
+  and excel-mcp-server each extracted 0, because they register tools through
+  their own bespoke class instead of the standard SDK). It also skips every
+  non-Python server. So every tool count here is a floor, not a ceiling.
+- Pattern-based checks flag harmless text too. I reviewed the matches by hand, so
+  this writeup reports the reviewed conclusion, not the raw machine count.
 
-Tool is Apache-2.0: https://github.com/agentsploit/agentsploit — check ideas and
-PRs welcome.
+The tool is Apache-2.0: https://github.com/agentsploit/agentsploit. Ideas and
+pull requests welcome.

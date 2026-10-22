@@ -1,7 +1,7 @@
 """Unicode tag-block smuggling - encode instructions in invisible U+E0000 range chars.
 
 See: Riley Goodside's "ASCII Smuggling" research (2024) and follow-ups.
-The Unicode Tag block (U+E0020 – U+E007F) is invisible in most renderers but
+The Unicode Tag block (U+E0020 to U+E007F) is invisible in most renderers but
 is tokenized by many LLM tokenizers. We map ASCII printable chars to their
 tag-block equivalents to produce a visually empty but semantically present payload.
 """
