@@ -21,12 +21,11 @@ host and never executes a scanned server. See README.md.
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +55,11 @@ try:
     from agentsploit.modules.mcp.checks.tool_shadowing import ToolShadowingCheck
     from agentsploit.modules.mcp.checks.unsafe_tool_args import UnsafeToolArgsCheck
     from agentsploit.modules.mcp.client import MCPInventory
+    from agentsploit.modules.survey import (
+        ExtractedTool,
+        extract_tools_from_path,
+    )
+    from agentsploit.modules.survey import classify as _survey_classify
 except ImportError:
     sys.path.insert(0, str(REPO_ROOT / "src"))
     from agentsploit.core.finding import Severity  # noqa: F401
@@ -64,6 +68,11 @@ except ImportError:
     from agentsploit.modules.mcp.checks.tool_shadowing import ToolShadowingCheck
     from agentsploit.modules.mcp.checks.unsafe_tool_args import UnsafeToolArgsCheck
     from agentsploit.modules.mcp.client import MCPInventory
+    from agentsploit.modules.survey import (
+        ExtractedTool,  # noqa: F401
+        extract_tools_from_path,
+    )
+    from agentsploit.modules.survey import classify as _survey_classify
 
 INVENTORY_CHECKS = [
     ToolPoisoningCheck,
@@ -74,255 +83,8 @@ INVENTORY_CHECKS = [
 
 # ------------------------------------------------------------------- AST extract
 
-_DECORATOR_TOOL_NAMES = {"tool"}  # matches @mcp.tool(), @server.tool(), @app.tool()
-_ANNOTATION_TO_JSON = {
-    "str": "string",
-    "int": "integer",
-    "float": "number",
-    "bool": "boolean",
-    "list": "array",
-    "dict": "object",
-}
-
-
-EnumMap = dict[tuple[str, str], str]
-
-
-def _build_enum_map(tree: ast.AST) -> EnumMap:
-    """Map (ClassName, MEMBER) -> str value for same-file str/Enum classes.
-
-    Handles the very common `class GitTools(str, Enum): STATUS = "git_status"`
-    pattern so `name=GitTools.STATUS` resolves to the real tool name."""
-    enums: EnumMap = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        base_names = {
-            (b.id if isinstance(b, ast.Name) else getattr(b, "attr", "")) for b in node.bases
-        }
-        if not (base_names & {"Enum", "IntEnum", "StrEnum"}):
-            continue
-        for stmt in node.body:
-            if (
-                isinstance(stmt, ast.Assign)
-                and len(stmt.targets) == 1
-                and isinstance(stmt.targets[0], ast.Name)
-                and isinstance(stmt.value, ast.Constant)
-                and isinstance(stmt.value.value, str)
-            ):
-                enums[(node.name, stmt.targets[0].id)] = stmt.value.value
-    return enums
-
-
-def _static_str(node: ast.expr | None, enums: EnumMap | None = None) -> str | None:
-    """Best-effort constant-fold a string expression: literal, implicit concat,
-    `"a" + "b"`, or a same-file `str`-Enum member. None if not statically a str."""
-    if node is None:
-        return None
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left, right = _static_str(node.left, enums), _static_str(node.right, enums)
-        if left is not None and right is not None:
-            return left + right
-    if enums and isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-        return enums.get((node.value.id, node.attr))
-    return None
-
-
-def _static_obj(node: ast.expr | None) -> Any:
-    """literal_eval a node (for inputSchema dicts). None if not a literal."""
-    if node is None:
-        return None
-    try:
-        return ast.literal_eval(node)
-    except (ValueError, TypeError, SyntaxError):
-        return None
-
-
-def _kw(call: ast.Call, name: str) -> ast.expr | None:
-    for k in call.keywords:
-        if k.arg == name:
-            return k.value
-    return None
-
-
-def _decorator_is_tool(dec: ast.expr) -> bool:
-    target = dec.func if isinstance(dec, ast.Call) else dec
-    if isinstance(target, ast.Attribute):
-        return target.attr in _DECORATOR_TOOL_NAMES
-    if isinstance(target, ast.Name):
-        return target.id in _DECORATOR_TOOL_NAMES
-    return False
-
-
-def _schema_from_signature(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, Any]:
-    """Rough inputSchema from annotated params (skips self/ctx/context)."""
-    props: dict[str, Any] = {}
-    required: list[str] = []
-    args = fn.args
-    defaults_start = len(args.args) - len(args.defaults)
-    for i, a in enumerate(args.args):
-        if a.arg in {"self", "cls", "ctx", "context"}:
-            continue
-        jtype = None
-        if isinstance(a.annotation, ast.Name):
-            jtype = _ANNOTATION_TO_JSON.get(a.annotation.id)
-        props[a.arg] = {"type": jtype} if jtype else {}
-        if i < defaults_start:
-            required.append(a.arg)
-    schema: dict[str, Any] = {"type": "object", "properties": props}
-    if required:
-        schema["required"] = required
-    return schema
-
-
-@dataclass
-class ExtractedTool:
-    name: str
-    description: str
-    inputSchema: dict[str, Any] = field(default_factory=dict)  # noqa: N815 (MCP field name)
-    source: str = ""  # file:line
-    method: str = ""  # how it was extracted
-    schema_partial: bool = False
-
-
-def _extract_from_tree(tree: ast.AST, relpath: str) -> list[ExtractedTool]:
-    tools: list[ExtractedTool] = []
-    enums = _build_enum_map(tree)
-
-    # Pattern A: Tool(name=..., description=..., inputSchema=...) call literals.
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            fn = node.func
-            fname = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
-            if fname != "Tool":
-                continue
-            name = _static_str(_kw(node, "name"), enums)
-            if name is None:
-                continue
-            desc = _static_str(_kw(node, "description"), enums) or ""
-            schema = _static_obj(_kw(node, "inputSchema"))
-            if not isinstance(schema, dict):
-                schema = _static_obj(_kw(node, "input_schema"))
-            partial = not isinstance(schema, dict)
-            tools.append(
-                ExtractedTool(
-                    name=name,
-                    description=desc,
-                    inputSchema=schema if isinstance(schema, dict) else {},
-                    source=f"{relpath}:{node.lineno}",
-                    method="Tool()-literal",
-                    schema_partial=partial,
-                )
-            )
-
-    # Pattern B: @mcp.tool()/@server.tool() decorated functions.
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            tool_decs = [d for d in node.decorator_list if _decorator_is_tool(d)]
-            if not tool_decs:
-                continue
-            dec = tool_decs[0]
-            name = None
-            desc = None
-            if isinstance(dec, ast.Call):
-                name = _static_str(_kw(dec, "name"), enums)
-                desc = _static_str(_kw(dec, "description"), enums)
-            name = name or node.name
-            desc = desc if desc is not None else (ast.get_docstring(node) or "")
-            tools.append(
-                ExtractedTool(
-                    name=name,
-                    description=desc,
-                    inputSchema=_schema_from_signature(node),
-                    source=f"{relpath}:{node.lineno}",
-                    method="@tool-decorator",
-                    schema_partial=True,  # signature-derived schema is approximate
-                )
-            )
-
-    # Pattern C: Tool.from_function(fn, name=..., description=...) factory calls
-    # (e.g. clickhouse: mcp.add_tool(Tool.from_function(list_databases, name=...))).
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "from_function"
-        ):
-            name = _static_str(_kw(node, "name"), enums)
-            if name is None:
-                continue
-            tools.append(
-                ExtractedTool(
-                    name=name,
-                    description=_static_str(_kw(node, "description"), enums) or "",
-                    inputSchema={},
-                    source=f"{relpath}:{node.lineno}",
-                    method="from_function()",
-                    schema_partial=True,
-                )
-            )
-
-    # Pattern D: programmatic registration `x.tool(fn, name=...)` /
-    # `x.add_tool(fn, name=...)` (e.g. qdrant: self.tool(find_foo, name=...)).
-    # Requires a positional arg + literal name= so it can't collide with the
-    # zero-positional `@x.tool()` decorator (Pattern B) or a from_function arg.
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in {"tool", "add_tool"}
-            and node.args
-        ):
-            first = node.args[0]
-            if isinstance(first, ast.Call):  # e.g. add_tool(Tool.from_function(...)) -> Pattern C/A
-                continue
-            name = _static_str(_kw(node, "name"), enums)
-            if name is None:
-                continue
-            tools.append(
-                ExtractedTool(
-                    name=name,
-                    description=_static_str(_kw(node, "description"), enums) or "",
-                    inputSchema={},
-                    source=f"{relpath}:{node.lineno}",
-                    method=f".{node.func.attr}()-call",
-                    schema_partial=True,
-                )
-            )
-
-    # De-dupe by (name, source).
-    seen: set[tuple[str, str]] = set()
-    unique: list[ExtractedTool] = []
-    for t in tools:
-        key = (t.name, t.source)
-        if key not in seen:
-            seen.add(key)
-            unique.append(t)
-    return unique
-
-
-def extract_tools_from_path(root: Path) -> tuple[list[ExtractedTool], list[str]]:
-    """Walk a checkout and extract tools from every parseable .py file."""
-    tools: list[ExtractedTool] = []
-    parse_errors: list[str] = []
-    skip = {".venv", "venv", "node_modules", "build", "dist", "tests", "test"}
-    for py in sorted(root.rglob("*.py")):
-        rel = py.relative_to(root)
-        if set(rel.parts[:-1]) & skip:  # only dirs *below* the root, not the root itself
-            continue
-        try:
-            src = py.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(src, filename=str(py))
-        except (SyntaxError, ValueError) as e:
-            parse_errors.append(f"{rel}: {e}")
-            continue
-        tools.extend(_extract_from_tree(tree, str(rel)))
-    return tools, parse_errors
-
-
-# ------------------------------------------------------------------------ collect
+# Tool extraction and the ExtractedTool model come from the agentsploit survey
+# module (imported above), so there is a single implementation.
 
 
 def _clone(repo: str, ref: str | None, dest: Path, refresh: bool) -> None:
@@ -503,90 +265,16 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
 
 # ------------------------------------------------------------------- surface/graph
 
-# Heuristic capability classification. This is NOT a confirmed data-flow; it
-# labels each tool by whether it *looks like* it ingests untrusted EXTERNAL
-# content (source) and/or performs a high-impact action (sink). A server that
-# exposes both in one context is where a source->sink chain can exist.
-#
-# Tightened for precision: source names are limited to external-content verbs
-# (no bare get/list/search/read/open, which are mostly internal enumeration);
-# arg matching is token-based (so `file` no longer matches `profile`).
-_SOURCE_NAME = ("fetch", "crawl", "scrape", "download", "browse")
-_SOURCE_ARG = (
-    "url",
-    "uri",
-    "href",
-    "endpoint",
-    "webpage",
-    "website",
-    "path",
-    "file",
-    "filepath",
-    "filename",
-    "document",
-)
-_SINK_NAME = (
-    "exec",
-    "execute",
-    "run",
-    "shell",
-    "command",
-    "eval",
-    "query",
-    "sql",
-    "cypher",
-    "gremlin",
-    "write",
-    "create",
-    "update",
-    "delete",
-    "remove",
-    "insert",
-    "send",
-    "email",
-    "commit",
-    "push",
-    "publish",
-    "upload",
-    "drop",
-    "alter",
-)
-_SINK_ARG = (
-    "command",
-    "cmd",
-    "query",
-    "sql",
-    "cypher",
-    "code",
-    "script",
-    "body",
-    "payload",
-    "statement",
-    "expression",
-)
-
-_re = __import__("re")
-_CAMEL = _re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-
-
-def _tokens(s: str) -> set[str]:
-    """camelCase- and delimiter-aware token set, so `executeQuery` -> {execute,
-    query} but `dsql_read_docs` -> {dsql, read, docs} (no spurious `sql`)."""
-    return {t for t in _re.split(r"[^A-Za-z0-9]+", _CAMEL.sub(" ", s).lower()) if t}
-
 
 def _classify(tool: dict[str, Any]) -> dict[str, Any]:
-    name_toks = _tokens(str(tool.get("name", "")))
-    args = list((tool.get("inputSchema", {}) or {}).get("properties", {}).keys())
-    src = [f"name~{k}" for k in _SOURCE_NAME if k in name_toks]
-    snk = [f"name~{k}" for k in _SINK_NAME if k in name_toks]
-    for a in args:
-        toks = _tokens(a)
-        if toks & set(_SOURCE_ARG):
-            src.append(f"arg:{a}")
-        if toks & set(_SINK_ARG):
-            snk.append(f"arg:{a}")
-    return {"source": bool(src), "sink": bool(snk), "source_why": src[:3], "sink_why": snk[:3]}
+    """Adapt the survey module's classifier to the dict shape cmd_surface uses."""
+    c = _survey_classify(tool)
+    return {
+        "source": c.source,
+        "sink": c.sink,
+        "source_why": c.source_why,
+        "sink_why": c.sink_why,
+    }
 
 
 def cmd_surface(args: argparse.Namespace) -> int:

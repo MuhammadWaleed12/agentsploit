@@ -47,7 +47,7 @@ agentsploit serve --training
 
 ## Capabilities
 
-AgentSploit ships eleven modules covering the agentic attack surface. Each is documented end-to-end with bundled vulnerable fixtures so you can run every one against a local target with `--training` and no API keys.
+AgentSploit ships twelve capabilities covering the agentic attack surface. Each is documented end-to-end with bundled vulnerable fixtures so you can run every one against a local target with `--training` and no API keys.
 
 ### 1. MCP Server Scanner
 
@@ -257,6 +257,17 @@ agentsploit serve --auth authorization.yaml
 ```
 
 Cytoscape-rendered permission graphs, severity-filtered findings tables with per-finding evidence drilldowns, a sortable attack-path explorer with one-click "Verify this path" buttons, and a Jobs page where findings stream in live as scans run. Defaults to localhost-only with auth required. See [docs/web-ui.md](docs/web-ui.md).
+
+### 12. Static MCP source survey (v1.7)
+
+Reads a local MCP server's tool definitions straight from its Python source (no network, nothing executed), runs the inventory checks over them, and labels each tool as an untrusted-content **source** and/or a high-impact **sink**. Useful for triaging a server you don't want to run, or for surveying many servers at once. Needs no authorization, since it only reads local files.
+
+```bash
+agentsploit survey ./path/to/mcp-server          # a repo directory or a single .py file
+agentsploit survey ./server -f json -o out.json  # machine-readable
+```
+
+Counts are a lower bound (it can't resolve Pydantic schemas, cross-file enums, or custom non-SDK tool registries, and it skips non-Python servers), and the source/sink labels are heuristic, not a confirmed data-flow. This is the engine behind [docs/mcp-tool-survey.md](docs/mcp-tool-survey.md); the reproducible multi-repo harness lives in [examples/mcp-survey/](examples/mcp-survey).
 
 ## Install
 

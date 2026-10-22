@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -268,6 +269,85 @@ def list_modules(
             ", ".join(t.value for t in meta.supported_targets) or "any",
         )
     console.print(table)
+
+
+@app.command("survey")
+def survey(
+    path: Annotated[
+        Path,
+        typer.Argument(help="Local MCP server checkout to read (a repo directory or a .py file)."),
+    ],
+    checks: Annotated[
+        list[str] | None,
+        typer.Option("--check", help="Run only these inventory checks (repeatable)."),
+    ] = None,
+    out_format: Annotated[str, typer.Option("--format", "-f", help="rich|json")] = "rich",
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", "-o", help="Output file (required for --format json)"),
+    ] = None,
+) -> None:
+    """Statically survey a local MCP server's tool definitions.
+
+    Reads tool definitions from Python source (no network, nothing executed),
+    runs the inventory checks over them, and labels each tool source/sink. Counts
+    are a lower bound; see the survey module docs for what static reading misses.
+    """
+    from agentsploit.modules.survey import run_survey
+
+    if not path.exists():
+        raise typer.BadParameter(f"Path not found: {path}")
+
+    result = run_survey(path, check_filter=checks)
+
+    if out_format == "json":
+        if out is None:
+            raise typer.BadParameter("--out is required for --format json")
+        out.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+        console.print(f"Survey written to [bold]{out}[/bold]")
+        raise typer.Exit(code=1 if result.findings else 0)
+
+    sev_color = {
+        "CRITICAL": "bold red",
+        "HIGH": "red",
+        "MEDIUM": "yellow",
+        "LOW": "cyan",
+        "INFO": "dim",
+    }
+    console.print(
+        Panel(
+            f"Path:    [bold]{result.root}[/bold]\n"
+            f"Tools:   [bold]{len(result.tools)}[/bold]\n"
+            f"Sources: {result.n_sources}   Sinks: {result.n_sinks}   "
+            f"Both: [bold]{result.n_both}[/bold]   "
+            f"Source+sink in one context: [bold]{'YES' if result.coexists else 'no'}[/bold]",
+            title="MCP survey",
+            border_style="cyan",
+        )
+    )
+    if result.findings:
+        order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
+        table = Table(title=f"{len(result.findings)} findings")
+        table.add_column("Severity")
+        table.add_column("Check")
+        table.add_column("Tool / item", overflow="fold")
+        table.add_column("Title", overflow="fold")
+        for f in sorted(result.findings, key=lambda f: order.get(f.severity, 9)):
+            color = sev_color.get(f.severity, "white")
+            table.add_row(f"[{color}]{f.severity}[/{color}]", f.check, f.target_item, f.title)
+        console.print(table)
+    else:
+        console.print("[green]No inventory findings.[/green]")
+
+    if result.parse_errors:
+        console.print(f"[dim]{len(result.parse_errors)} file(s) could not be parsed.[/dim]")
+    console.print(
+        "\n[dim]Static and heuristic, so the counts are a lower bound (Pydantic "
+        "schemas, cross-file enums, custom registries, and non-Python servers are "
+        "not captured). Source/sink labels are capability guesses, not a confirmed "
+        "data-flow.[/dim]"
+    )
+    raise typer.Exit(code=1 if result.findings else 0)
 
 
 @app.command("init")

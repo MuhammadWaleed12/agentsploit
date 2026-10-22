@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-22
+
+Static MCP source survey, plus two community-contributed checks.
+
+### Added
+
+- **`agentsploit survey <path>`**: a static, execution-free survey of a local
+  MCP server's tool definitions. It reads tool declarations straight from Python
+  source with `ast` (no network, nothing imported or executed), runs the
+  transport-agnostic inventory checks over them, and labels each tool as an
+  untrusted-content source and/or a high-impact sink. Supports `--format
+  rich|json`, `--out`, and `--check`. Needs no authorization, since it only
+  reads local files. This is the engine behind `docs/mcp-tool-survey.md`; the
+  reproducible multi-repo harness lives in `examples/mcp-survey/`.
+- New `agentsploit.modules.survey` package (`extractor`, `classifier`,
+  `surveyor`) with the AST tool-definition reader and the source/sink labeler.
+- **`prompt_poisoning` check** (thanks @MuhammadWaleed12): flags injection
+  patterns in a server's advertised and rendered MCP prompt templates, the
+  prompts-primitive analogue of `tool_poisoning`.
+- **`payload_splitting` injection technique** (thanks @MuhammadWaleed12):
+  distributes an instruction across indexed fragments to evade span-local
+  filters.
+
+### Notes
+
+- The survey reads only published source, so its counts are a lower bound: it
+  can't resolve Pydantic-schema arguments, cross-file enums, or custom non-SDK
+  tool registries, and it skips non-Python servers. The source/sink labels are
+  heuristic capability guesses, not a confirmed data-flow.
+
 ## [1.6.3] - 2026-05-19
 
 Release-workflow patch. v1.6.2's release pipeline failed at the
