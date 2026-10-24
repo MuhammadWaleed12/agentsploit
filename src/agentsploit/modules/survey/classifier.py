@@ -72,6 +72,52 @@ _SINK_ARG = (
     "expression",
 )
 
+# Return-value / content sources (added after reader feedback on the survey): a
+# read-style tool that deals in user-authored content returns untrusted text even
+# when it only takes an id, so `list_comments` or `get_issue` are sources that the
+# arg-name signals above miss. We require both a read-style verb and a content noun
+# in the tool NAME, so `get_messages` / `list_comments` count but `pin_message` or
+# `create_comment` (actions, not reads of untrusted text) do not. Matching on the
+# description was tried first and over-fired on messaging servers, where the word
+# "message" shows up in nearly every description.
+_CONTENT_NOUN = (
+    "comment",
+    "comments",
+    "message",
+    "messages",
+    "issue",
+    "issues",
+    "ticket",
+    "tickets",
+    "review",
+    "reviews",
+    "reply",
+    "replies",
+    "thread",
+    "threads",
+    "feedback",
+    "conversation",
+    "conversations",
+    "mail",
+    "inbox",
+)
+_READ_VERB = (
+    "get",
+    "list",
+    "read",
+    "fetch",
+    "search",
+    "view",
+    "show",
+    "find",
+    "retrieve",
+    "export",
+    "download",
+    "load",
+    "pull",
+    "describe",
+)
+
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _SPLIT = re.compile(r"[^A-Za-z0-9]+")
 
@@ -109,6 +155,9 @@ def classify(tool: dict[str, Any]) -> Capability:
             src.append(f"arg:{a}")
         if toks & set(_SINK_ARG):
             snk.append(f"arg:{a}")
+    content_hits = name_toks & set(_CONTENT_NOUN)
+    if content_hits and (name_toks & set(_READ_VERB)):
+        src.append(f"content~{sorted(content_hits)[0]}")
     return Capability(
         name=name,
         source=bool(src),

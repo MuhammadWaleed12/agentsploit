@@ -16,6 +16,12 @@
 > capability labels are rough heuristics (see the caveats), and this writeup
 > deliberately does **not** call anything a vulnerability.
 
+> Update (2026-10-24): after readers pointed out that read tools which return
+> user-authored content (comments, issues, messages) are untrusted-content
+> sources too, even when they only take an id, I added return-value detection by
+> tool name. The source and "both" counts below reflect that. The first version
+> counted 239 sources, 59 both, and 14 of 28 servers.
+
 I kept running into MCP servers where one tool fetches a web page and another
 tool runs a command, both handed to the same agent, with nothing telling the
 model which one is dangerous. Instead of guessing how common that is, I decided
@@ -59,7 +65,10 @@ I sorted every tool into two buckets:
 
 - A **source** is a tool that pulls in outside content you don't control. In the
   data, that means it takes an argument like `url`, `uri`, `path`, or `document`,
-  or its name looks like `fetch` / `read` / `search` / `crawl`.
+  its name looks like `fetch` / `read` / `search` / `crawl`, or it's a read-style
+  tool that returns user-authored content (a `get_issue` or `list_comments` hands
+  back whatever a commenter or portal customer wrote, even though it only takes
+  an id).
 - A **sink** is a tool that does something with real impact. That means a name
   like `exec` / `run` / `query` / `write` / `send` / `delete`, or an argument
   like `command`, `query`, or `code`.
@@ -72,17 +81,17 @@ Across 1,384 tools:
 
 | | count |
 |---|---|
-| untrusted-content **sources** | 239 |
+| untrusted-content **sources** | 275 |
 | high-impact **sinks** | 384 |
-| tools that are **both** (they ingest *and* act) | **59** |
-| servers that expose at least one source **and** one sink in the same context | **14 / 28** |
+| tools that are **both** (they ingest *and* act) | **67** |
+| servers that expose at least one source **and** one sink in the same context | **15 / 28** |
 
-The 59 "both" tools are the sharpest edge. A single tool that pulls in a URL or a
+The 67 "both" tools are the sharpest edge. A single tool that pulls in a URL or a
 file and also runs a query or a command is a one-call bridge from untrusted input
 straight to a real action, if the content it pulls is attacker-controlled. For
 example `search_table(url)` that also takes a `query`, or `run_query(db_endpoint,
 sql)`, or the Google Workspace and Office document tools that read a document and
-write it back. And 14 of the 28 servers put sources and sinks in the same agent
+write it back. And 15 of the 28 servers put sources and sinks in the same agent
 context with nothing marking one as untrusted or the other as dangerous. (The
 harness prints the full list so you can check it yourself. A few are weak
 matches. For instance AWS IAM's `create_user` trips the filter on an IAM `path`
@@ -136,7 +145,7 @@ python survey.py surface          # run the source/sink classification
   names), and the matching is token-based. It's still a guess at what a tool can
   do, not a traced data-flow. So read the counts as "could plausibly be," and
   trust the overall shape more than any single number. The shape is the sturdy
-  part: most servers mix ingestion and action, and 59 tools do both in one call.
+  part: most servers mix ingestion and action, and 67 tools do both in one call.
 - Static reading misses some tools. It can't resolve Pydantic-schema arguments or
   cross-file enums, and it skips custom tool frameworks (serena, mcp-obsidian,
   and excel-mcp-server each extracted 0, because they register tools through

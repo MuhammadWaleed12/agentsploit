@@ -91,6 +91,20 @@ def test_classify_token_match_avoids_substring_false_positive() -> None:
     assert not cap.source
 
 
+def test_classify_return_value_content_source() -> None:
+    # Read tools that return user-authored content are sources even when they only
+    # take an id (they return whatever a commenter/customer wrote).
+    for name in ("get_issue", "list_comments", "get_messages", "search_reviews"):
+        cap = classify({"name": name, "inputSchema": {"properties": {"id": {}}}})
+        assert cap.source, name
+        assert any(w.startswith("content~") for w in cap.source_why), name
+
+    # Writes and actions on the same nouns are NOT content sources.
+    for name in ("create_comment", "pin_message", "delete_issue", "send_message"):
+        cap = classify({"name": name, "inputSchema": {"properties": {"id": {}}}})
+        assert not any(w.startswith("content~") for w in cap.source_why), name
+
+
 def test_fixture_extracts_four_tools() -> None:
     tools, errors = extract_tools_from_path(FIXTURE)
     assert {t.name for t in tools} == {
