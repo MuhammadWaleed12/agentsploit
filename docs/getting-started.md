@@ -149,6 +149,7 @@ This creates a complete starter kit:
 |---|---|
 | `authorization.yaml` | Scope file enforced at the CLI boundary on every run |
 | `agent-anthropic.yaml` | Claude config (default) |
+| `agent-gemini.yaml` | Google Gemini config |
 | `agent-openai.yaml` | OpenAI Chat Completions config |
 | `agent-http.yaml` | Custom HTTP agent config |
 | `map-targets.yaml` | List of MCP servers to enumerate together |

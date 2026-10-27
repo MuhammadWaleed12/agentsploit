@@ -42,7 +42,7 @@ Loaded from a YAML file. See [examples/agent-anthropic.yaml](../examples/agent-a
 Minimal config:
 
 ```yaml
-provider: anthropic        # anthropic | openai | http | mock
+provider: anthropic        # anthropic | gemini | openai | http | mock
 model: claude-sonnet-4-6
 api_key_env: ANTHROPIC_API_KEY
 
@@ -63,11 +63,12 @@ mock_tools:
 | `provider` | What it talks to | Auth | Notes |
 |---|---|---|---|
 | `anthropic` | Anthropic Messages API (Claude tool use) | `api_key_env: ANTHROPIC_API_KEY` | Supports extended thinking detection (v0.3+) |
+| `gemini` | Google Gemini API (native function calling) | `api_key_env: GEMINI_API_KEY` | Captures response text, thought summaries, and function-call arguments |
 | `openai` | OpenAI Chat Completions API | `api_key_env: OPENAI_API_KEY` | Set `endpoint:` to point at Azure OpenAI / OpenRouter / proxies (v0.9+) |
 | `http` | Generic HTTP agent with OpenAI-shaped request/response | `api_key_env:` → `Authorization: Bearer …`; extra `headers:` dict | For in-house wrappers (v0.9+). Subclass `GenericHTTPAdapter` for custom shapes |
 | `mock` | Deterministic in-process simulator | none | Tests, demos, batch pre-filter |
 
-The `endpoint` and `headers` fields are HTTP-only - `anthropic`/`mock` ignore them.
+The `endpoint` and `headers` fields are HTTP-only - `anthropic`/`gemini`/`mock` ignore them.
 
 ### Authoring a custom HTTP adapter
 
@@ -139,7 +140,7 @@ Training mode (`--training`) allows `agent+mock://*` and loopback HTTP for safe 
 
 ## Streaming canary detection (v1.2)
 
-Default in v1.2: every adapter that supports streaming (anthropic, openai, mock) feeds incremental output to a `CanaryStreamWatcher` and aborts the run the moment the canary appears. Two wins:
+Default in v1.2: every adapter that supports streaming (anthropic, gemini, openai, mock) feeds incremental output to a `CanaryStreamWatcher` and aborts the run the moment the canary appears. Two wins:
 
 1. **Cost**: a 10-turn run that confirms on turn 1 burns ~10% of the original token count. Real LLM testing was the main bottleneck for `verify all-paths` and `poison verify` at scale; streaming makes those affordable.
 2. **Safety**: when the canary surfaces in a *tool-call args* delta, the adapter aborts BEFORE the agent actually invokes the sink. For real-world tests where the sink does something destructive (sends email, executes a command), this is the difference between "we proved it's exploitable" and "we proved it's exploitable AND sent the email to the attacker."

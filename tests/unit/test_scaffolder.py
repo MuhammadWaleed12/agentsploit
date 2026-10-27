@@ -18,6 +18,7 @@ def test_creates_full_engagement_directory(tmp_path: Path) -> None:
     assert names == {
         "authorization.yaml",
         "agent-anthropic.yaml",
+        "agent-gemini.yaml",
         "agent-openai.yaml",
         "agent-http.yaml",
         "map-targets.yaml",
@@ -51,7 +52,7 @@ def test_force_overwrites_existing_files(tmp_path: Path) -> None:
     assert "stale: content" not in (target / "authorization.yaml").read_text()
     # Unrelated existing files left alone
     assert (target / "unrelated-file").read_text() == "keep me"
-    assert len(written) == 7
+    assert len(written) == 8
 
 
 def test_empty_dir_is_writable_without_force(tmp_path: Path) -> None:
@@ -59,7 +60,7 @@ def test_empty_dir_is_writable_without_force(tmp_path: Path) -> None:
     target = tmp_path / "fresh"
     target.mkdir()  # exists but empty
     written = scaffold_engagement(target)
-    assert len(written) == 7
+    assert len(written) == 8
 
 
 def test_generated_authorization_yaml_loads_via_real_loader(tmp_path: Path) -> None:
@@ -80,12 +81,17 @@ def test_generated_authorization_yaml_loads_via_real_loader(tmp_path: Path) -> N
 
 
 def test_generated_agent_configs_load_via_real_loader(tmp_path: Path) -> None:
-    """Round-trip: all three agent YAMLs must load cleanly."""
+    """Round-trip: every generated agent YAML must load cleanly."""
     target = tmp_path / "engagement"
     scaffold_engagement(target)
-    for name in ("agent-anthropic.yaml", "agent-openai.yaml", "agent-http.yaml"):
+    for name in (
+        "agent-anthropic.yaml",
+        "agent-gemini.yaml",
+        "agent-openai.yaml",
+        "agent-http.yaml",
+    ):
         cfg = RunnerConfig.load(target / name)
-        assert cfg.provider in ("anthropic", "openai", "http")
+        assert cfg.provider in ("anthropic", "gemini", "openai", "http")
         # Streaming should be the v1.2+ default-on flag in non-http configs
         if cfg.provider != "http":
             assert cfg.stream is True

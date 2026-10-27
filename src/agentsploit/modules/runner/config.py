@@ -46,7 +46,7 @@ class RunnerConfig(BaseModel):
     """
 
     provider: str
-    """One of: anthropic, openai, mock, http"""
+    """One of: anthropic, gemini, openai, mock, http"""
 
     model: str
     """Provider-specific model identifier (e.g. claude-sonnet-4-6)."""
@@ -91,7 +91,7 @@ class RunnerConfig(BaseModel):
     @field_validator("provider")
     @classmethod
     def _provider_known(cls, v: str) -> str:
-        known = {"anthropic", "openai", "mock", "http"}
+        known = {"anthropic", "gemini", "openai", "mock", "http"}
         if v not in known:
             raise ValueError(f"Unknown provider {v!r}. Supported: {sorted(known)}")
         return v

@@ -14,6 +14,10 @@ def get_adapter(provider: str) -> AgentAdapter:
         from agentsploit.modules.runner.adapters.openai import OpenAIAdapter
 
         return OpenAIAdapter()
+    if provider == "gemini":
+        from agentsploit.modules.runner.adapters.gemini import GeminiAdapter
+
+        return GeminiAdapter()
     if provider == "http":
         from agentsploit.modules.runner.adapters.http import GenericHTTPAdapter
 
@@ -21,7 +25,7 @@ def get_adapter(provider: str) -> AgentAdapter:
     if provider == "mock":
         return MockAgentAdapter()
     raise ValueError(
-        f"No adapter for provider {provider!r}. Supported: anthropic, openai, http, mock."
+        f"No adapter for provider {provider!r}. Supported: anthropic, gemini, openai, http, mock."
     )
 
 
